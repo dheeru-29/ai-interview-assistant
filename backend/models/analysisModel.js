@@ -1,25 +1,13 @@
-// backend/models/analysisModel.js
 const mongoose = require('mongoose');
 
 const analysisSchema = mongoose.Schema(
   {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: true,
-      ref: 'User', // This links the analysis to a specific user
-    },
-    image: {
-      type: String, // We will store the image as a Base64 string
-      required: true,
-    },
-    suggestions: {
-      type: [String], // An array of strings
-      required: true,
-    },
+    user: { type: mongoose.Schema.Types.ObjectId, required: true, ref: 'User' },
+    image: { type: String, required: true },
+    visualFeedback: { type: [String], required: true }, // Changed to an array of strings
+    voiceFeedback: { type: [String], required: true }, // Changed to an array of strings
   },
-  {
-    timestamps: true, // Automatically adds createdAt and updatedAt fields
-  }
+  { timestamps: true }
 );
 
 const Analysis = mongoose.model('Analysis', analysisSchema);

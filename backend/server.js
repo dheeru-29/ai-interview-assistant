@@ -1,4 +1,3 @@
-// server.js (Complete and Final Version)
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -9,13 +8,11 @@ const User = require('./models/userModel.js');
 const Analysis = require('./models/analysisModel.js');
 const userRoutes = require('./routes/userRoutes.js');
 
-// --- Initialize App & Middleware ---
 const app = express();
 const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// --- Security Middleware to Protect Routes ---
 const protect = async (req, res, next) => {
   let token;
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
@@ -26,103 +23,116 @@ const protect = async (req, res, next) => {
       next();
     } catch (error) {
       console.error(error);
-      res.status(401).json({ error: 'Not authorized, token failed' });
+      return res.status(401).json({ error: 'Not authorized, token failed' });
     }
   }
   if (!token) {
-    res.status(401).json({ error: 'Not authorized, no token' });
+    return res.status(401).json({ error: 'Not authorized, no token' });
   }
 };
 
-// --- API Routes ---
-app.use('/api/users', userRoutes); // User registration and login routes
+app.use('/api/users', userRoutes);
+const upload = multer({ storage: multer.memoryStorage() });
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
-
-// AI Analysis Route - now protected and saves to DB
-app.post("/api/analyze", protect, upload.single("image"), async (req, res) => {
+app.post("/api/analyze/all", protect, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'audio', maxCount: 1 }]), async (req, res) => {
+  let visualSuggestions = [];
+  let voiceSuggestions = [];
+  
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No image file uploaded." });
+    const imageFile = req.files.image[0];
+    const audioFile = req.files.audio[0];
+
+    if (!imageFile || !audioFile) {
+        return res.status(400).json({ error: "Both image and audio files are required." });
     }
-
-    const prompt = `You are a very strict career coach. Your task is to evaluate a user's appearance for a formal software engineering interview based on a checklist.
-
-**YOUR INSTRUCTIONS:**
-1. Go through each item in the **INTERVIEW CHECKLIST** below.
-2. For each item, briefly state your observation from the image.
-3. After making all your observations, provide a final, summary bulleted list of suggestions for improvement. Address the user directly as "You" or "Your".
-
-**INTERVIEW CHECKLIST:**
-Attire: (Observation: Is the user wearing professional attire like a collared shirt, or casual attire like a t-shirt/cap?)
-Grooming: (Observation: Is the user's hair and facial hair neat?)
-Posture: (Observation: Is the user sitting up straight or slouching?)
-Eye Contact: (Observation: Is the user looking towards the camera?)
-Framing:(Observation: Is the camera at eye-level and the user well-centered?)
-Background: (Observation: Is the background clean or cluttered?)
-Lighting:(Observation: Is the lighting good and from the front?)
-
-**CRITICAL RULE:** Base every observation *only* on what is visible in the image. Do not make assumptions.
-`;
     
-    const imageBuffer = req.file.buffer;
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 
-    const model = "@cf/llava-hf/llava-1.5-7b-hf";
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
-
-    const payload = {
-      prompt,
-      image: [...new Uint8Array(imageBuffer)],
-    };
-
-    console.log("📤 Sending request directly to Cloudflare API...");
-
-    const apiResponse = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!apiResponse.ok) {
-      const errorText = await apiResponse.text();
-      throw new Error(`Cloudflare API error: ${apiResponse.status} ${errorText}`);
+    // --- Perform Visual Analysis ---
+    try {
+        console.log("📤 Sending visual analysis request to Cloudflare...");
+        const visualPrompt = `You are a career coach. Analyze the user in the image for a formal interview. Provide a bulleted list of 3-4 concise, constructive suggestions for improvement.
+       
+        - Address the user directly as "You".
+        - Base all feedback ONLY on what is visible in the image. Do not make assumptions.`;
+        
+        const visualModel = "@cf/llava-hf/llava-1.5-7b-hf";
+        const visualUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${visualModel}`;
+        const visualPayload = { prompt: visualPrompt, image: [...new Uint8Array(imageFile.buffer)] };
+        
+        const visualApiResponse = await fetch(visualUrl, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(visualPayload),
+        });
+        if (!visualApiResponse.ok) throw new Error("Visual API failed");
+        const visualData = await visualApiResponse.json();
+        visualSuggestions = visualData.result.description.split('- ').map(s => s.trim().replace(/\n/g, '')).filter(s => s);
+        console.log("📥 Received visual analysis response.");
+    } catch(visualError) {
+        console.error("⚠️ Error in visual analysis:", visualError.message);
+        visualSuggestions = ["The AI failed to analyze the image. Please try again with better lighting."];
     }
-    
-    const responseData = await apiResponse.json();
-    console.log("📥 Received response from Cloudflare AI.");
-    
-    const suggestions = responseData.result.description
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
 
-    // --- Save the result to the database ---
-    const imageBase64 = imageBuffer.toString('base64');
+    // --- Perform Voice Analysis ---
+    try {
+        console.log("📤 Sending audio for transcription to Cloudflare...");
+        const whisperResponse = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/openai/whisper`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': audioFile.mimetype },
+            body: audioFile.buffer,
+        });
+        if (!whisperResponse.ok) throw new Error("Whisper API failed");
+        const transcriptData = await whisperResponse.json();
+        const transcript = transcriptData.result.text || "No speech detected.";
+        console.log("📥 Received transcript.");
+
+        if (!transcript || transcript.toLowerCase() === "no speech detected.") {
+            voiceSuggestions = ["No speech was detected in the audio."];
+        } else {
+            const voicePrompt = `You are a career coach. Analyze the following transcript from a practice interview.
+            TRANSCRIPT: "${transcript}"
+            Provide a bulleted list of 2-3 concise suggestions for improvement on clarity, confidence, and filler words.
+            
+            - Address the user directly as "You".`;
+
+            const llamaResponse = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/meta/llama-2-7b-chat-int8`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: voicePrompt }),
+            });
+            if (!llamaResponse.ok) throw new Error("Llama API failed");
+            const llamaData = await llamaResponse.json();
+            voiceSuggestions = llamaData.result.response.split('- ').map(s => s.trim().replace(/\n/g, '')).filter(s => s);
+            console.log("📥 Received voice analysis.");
+        }
+    } catch (voiceError) {
+        console.error("⚠️ Error in voice analysis:", voiceError.message);
+        voiceSuggestions = ["The AI failed to analyze the audio."];
+    }
+
+    // --- Save and Send Combined Result ---
+    const imageBase64 = imageFile.buffer.toString('base64');
     await Analysis.create({
-      user: req.user._id, // Link to the logged-in user from the 'protect' middleware
+      user: req.user._id,
       image: imageBase64,
-      suggestions: suggestions,
+      visualFeedback: visualSuggestions,
+      voiceFeedback: voiceSuggestions,
     });
-    console.log('✅ Analysis saved to database for user:', req.user.name);
-    
-    res.json({ suggestions });
+    console.log('✅ Combined analysis saved to database for user:', req.user.name);
+
+    res.json({
+      visualFeedback: visualSuggestions,
+      voiceFeedback: voiceSuggestions,
+    });
 
   } catch (error) {
-    console.error("❌ Error analyzing image:", error);
-    res.status(500).json({ error: "Failed to analyze image." });
+    console.error("❌ Major error in combined analysis:", error);
+    res.status(500).json({ error: "Failed to process analysis." });
   }
 });
 
-// Add this new route to backend/server.js
-
-// @desc    Get user's analysis history
-// @route   GET /api/analyses/history
 app.get("/api/analyses/history", protect, async (req, res) => {
   try {
     const analyses = await Analysis.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -133,15 +143,10 @@ app.get("/api/analyses/history", protect, async (req, res) => {
   }
 });
 
-
-
-// --- Database Connection ---
-mongoose
-  .connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected successfully."))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// --- Start the Server ---
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`);
 });

@@ -1,4 +1,4 @@
-// frontend/src/components/Header.jsx
+// frontend/src/components/Header.jsx (Updated)
 import React, { useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
@@ -13,26 +13,28 @@ const Header = () => {
   };
 
   return (
-    <header className="bg-gray-800 p-4 shadow-md">
+    <header className="text-indigo-500 bg-background p-4 shadow-md border-b border-border">
       <div className="container mx-auto flex justify-between items-center">
-        <Link to="/" className="text-xl font-bold text-white">
-           AI Analyzer
+        {/* CHANGED: This link now points to /coach */}
+        <Link to="/coach" class="text-indigo-500"className="text-xl font-bold text-foreground text-indigo-500">
+           AI Assistant
         </Link>
         <nav className="flex items-center space-x-4">
           {user ? (
             <>
-              <Link to="/" className="text-gray-300 hover:text-white">Analyze</Link>
-              <Link to="/history" className="text-gray-300 hover:text-white">History</Link>
-              <span className="text-gray-400">|</span>
-              <span className="text-gray-300">Welcome, {user.name}</span>
-              <button onClick={handleLogout} className="text-blue-400 hover:underline">
+              {/* CHANGED: This link now points to /coach */}
+              <Link to="/coach" className="text-muted-foreground hover:text-foreground transition-colors text-indigo-500 ">Analyze</Link>
+              <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors text-indigo-500">History</Link>
+              <span className="text-border">|</span>
+              <span className="text-muted-foreground text-indigo-500">Welcome, {user.name}</span>
+              <button onClick={handleLogout} className="text-primary hover:underline text-indigo-500">
                 Logout
               </button>
             </>
           ) : (
             <>
-              <Link to="/login" className="text-gray-300 hover:text-white">Login</Link>
-              <Link to="/register" className="text-gray-300 hover:text-white">Register</Link>
+              <Link to="/login" className="text-muted-foreground hover:text-foreground transition-colors">Login</Link>
+              <Link to="/register" className="text-muted-foreground hover:text-foreground transition-colors">Register</Link>
             </>
           )}
         </nav>
